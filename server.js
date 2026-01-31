@@ -67,6 +67,13 @@ app._router.stack.forEach(function(r){
 });
 console.log('========================');
 
+
+// TEMPORARY: Admin endpoint to populate MLB players
+app.get('/admin/populate-mlb-players', async (req, res) => {
+  const populateScript = require('./scripts/populate-mlb-players');
+  res.json({ message: 'Player population started. Check logs for progress.' });
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
