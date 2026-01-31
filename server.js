@@ -51,6 +51,22 @@ app.use('/api/games', gameRoutes);
 app.use('/api/draft', draftRoutes);
 app.use('/api/nba', nbaRoutes);
 
+
+// Debug: Log all registered routes
+console.log('=== Registered Routes ===');
+app._router.stack.forEach(function(r){
+  if (r.route && r.route.path){
+    console.log(r.route.path);
+  } else if (r.name === 'router') {
+    r.handle.stack.forEach(function(route){
+      if (route.route) {
+        console.log(r.regexp, route.route.path);
+      }
+    });
+  }
+});
+console.log('========================');
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
