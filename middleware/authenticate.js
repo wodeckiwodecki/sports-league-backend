@@ -13,16 +13,16 @@ const authenticate = (req, res, next) => {
     const token = authHeader.substring(7);
     const decoded = jwt.verify(token, JWT_SECRET);
     
+    // Set user from decoded token
     req.user = {
       id: decoded.userId,
-      email: decoded.email,
-      username: decoded.username || 'User'
+      email: decoded.email
     };
     
     next();
   } catch (error) {
-    console.error('Authentication error:', error);
-    return res.status(401).json({ error: 'Invalid or expired token' });
+    console.error('Authentication error:', error.message);
+    return res.status(401).json({ error: 'Invalid or expired token', details: error.message });
   }
 };
 
