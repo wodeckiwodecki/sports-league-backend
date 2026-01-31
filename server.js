@@ -7,6 +7,8 @@ require('dotenv').config();
 
 const authRoutes = require('./routes/auth');
 const leagueRoutes = require('./routes/leagues');
+const leaguesEnhancedRoutes = require('./routes/leagues-enhanced');
+const invitationsRoutes = require('./routes/invitations');
 const teamRoutes = require('./routes/teams');
 const playerRoutes = require('./routes/players');
 const tradeRoutes = require('./routes/trades');
@@ -39,6 +41,8 @@ app.set('io', io);
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/leagues', leagueRoutes);
+app.use('/api/leagues-v2', leaguesEnhancedRoutes); // New multiplayer leagues
+app.use('/api/invitations', invitationsRoutes); // League invitations
 app.use('/api/teams', teamRoutes);
 app.use('/api/players', playerRoutes);
 app.use('/api/trades', tradeRoutes);
