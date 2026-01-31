@@ -5,28 +5,22 @@ const nbaApiService = require('../services/nbaApiService');
 const mlbApiService = require('../services/mlbApiService');
 
 /**
- * Middleware to verify user is authenticated
- */
-const authenticate = (req, res, next) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-  next();
-};
-
-/**
- * POST /api/leagues/create-multiplayer
+ * POST /api/leagues-v2/create-multiplayer
  * Create a new multiplayer league with full settings
  */
-router.post('/create-multiplayer', authenticate, async (req, res) => {
+router.post('/create-multiplayer', async (req, res) => {
   const {
     name,
     sport = 'NBA',
     maxTeams = 30,
-    settings = {}
+    settings = {},
+    userId
   } = req.body;
   
-  const userId = req.user.id;
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+  
   const client = await pool.connect();
   
   try {
@@ -74,6 +68,10 @@ router.post('/create-multiplayer', authenticate, async (req, res) => {
       console.log('Columns may already exist:', err.message);
     }
 
+    // Get username
+    const userResult = await client.query('SELECT username FROM users WHERE id = $1', [userId]);
+    const username = userResult.rows[0]?.username || 'User';
+
     // Create league
     const leagueResult = await client.query(
       `INSERT INTO leagues 
@@ -107,7 +105,7 @@ router.post('/create-multiplayer', authenticate, async (req, res) => {
       `INSERT INTO teams (name, league_id, user_id, abbreviation)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [`${req.user.username}'s Team`, league.id, userId, 'T1']
+      [`${username}'s Team`, league.id, userId, 'T1']
     );
 
     // Create activity table if it doesn't exist
@@ -131,7 +129,7 @@ router.post('/create-multiplayer', authenticate, async (req, res) => {
     await client.query(
       `INSERT INTO league_activity (league_id, activity_type, title, description)
        VALUES ($1, 'league_created', 'League Created', $2)`,
-      [league.id, `${req.user.username} created the league`]
+      [league.id, `${username} created the league`]
     );
 
     await client.query('COMMIT');
@@ -151,125 +149,15 @@ router.post('/create-multiplayer', authenticate, async (req, res) => {
 });
 
 /**
- * GET /api/leagues/:id/details
- * Get comprehensive league details with teams and user info
- */
-router.get('/:id/details', authenticate, async (req, res) => {
-  const { id } = req.params;
-  const userId = req.user.id;
-  
-  try {
-    // Get league info
-    const leagueResult = await pool.query(
-      `SELECT l.*, u.username as commissioner_username
-       FROM leagues l
-       LEFT JOIN users u ON l.commissioner_user_id = u.id OR l.owner_id = u.id
-       WHERE l.id = $1`,
-      [id]
-    );
-    
-    if (!leagueResult.rows.length) {
-      return res.status(404).json({ error: 'League not found' });
-    }
-
-    const league = leagueResult.rows[0];
-
-    // Get all teams with user info
-    const teamsResult = await pool.query(
-      `SELECT t.*, u.username, u.email
-       FROM teams t
-       LEFT JOIN users u ON t.user_id = u.id
-       WHERE t.league_id = $1
-       ORDER BY t.id`,
-      [id]
-    );
-
-    // Check if user has access
-    const userTeam = teamsResult.rows.find(t => t.user_id === userId);
-    const isCommissioner = (league.commissioner_user_id === userId) || (league.owner_id === userId);
-
-    if (!userTeam && !isCommissioner) {
-      return res.status(403).json({ error: 'You are not a member of this league' });
-    }
-
-    // Get recent activity
-    const activityResult = await pool.query(
-      `SELECT * FROM league_activity
-       WHERE league_id = $1
-       ORDER BY created_at DESC
-       LIMIT 20`,
-      [id]
-    ).catch(() => ({ rows: [] }));
-    
-    res.json({
-      league,
-      teams: teamsResult.rows,
-      userTeam,
-      isCommissioner,
-      activity: activityResult.rows,
-      settings: league.league_settings || {}
-    });
-  } catch (error) {
-    console.error('Error fetching league details:', error);
-    res.status(500).json({ error: 'Failed to fetch league details' });
-  }
-});
-
-/**
- * PATCH /api/leagues/:id/settings
- * Update league settings (commissioner only)
- */
-router.patch('/:id/settings', authenticate, async (req, res) => {
-  const { id } = req.params;
-  const { settings } = req.body;
-  const userId = req.user.id;
-  
-  try {
-    // Verify commissioner
-    const leagueResult = await pool.query(
-      'SELECT commissioner_user_id, owner_id, status FROM leagues WHERE id = $1',
-      [id]
-    );
-    
-    if (!leagueResult.rows.length) {
-      return res.status(404).json({ error: 'League not found' });
-    }
-    
-    const league = leagueResult.rows[0];
-    const isCommissioner = (league.commissioner_user_id === userId) || (league.owner_id === userId);
-    
-    if (!isCommissioner) {
-      return res.status(403).json({ error: 'Only the commissioner can update settings' });
-    }
-    
-    if (league.status !== 'setup') {
-      return res.status(400).json({ error: 'Cannot modify settings after league has started' });
-    }
-
-    const result = await pool.query(
-      'UPDATE leagues SET league_settings = $1 WHERE id = $2 RETURNING *',
-      [JSON.stringify(settings), id]
-    );
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error updating settings:', error);
-    res.status(500).json({ error: 'Failed to update settings' });
-  }
-});
-
-/**
- * POST /api/leagues/:id/import-players
+ * POST /api/leagues-v2/:id/import-players
  * Import players based on league settings
  */
-router.post('/:id/import-players', authenticate, async (req, res) => {
+router.post('/:id/import-players', async (req, res) => {
   const { id } = req.params;
-  const userId = req.user.id;
   
   try {
-    // Verify commissioner
     const leagueResult = await pool.query(
-      'SELECT commissioner_user_id, owner_id, sport, league_settings FROM leagues WHERE id = $1',
+      'SELECT sport, league_settings FROM leagues WHERE id = $1',
       [id]
     );
     
@@ -278,12 +166,6 @@ router.post('/:id/import-players', authenticate, async (req, res) => {
     }
     
     const league = leagueResult.rows[0];
-    const isCommissioner = (league.commissioner_user_id === userId) || (league.owner_id === userId);
-    
-    if (!isCommissioner) {
-      return res.status(403).json({ error: 'Only the commissioner can import players' });
-    }
-
     const settings = league.league_settings || {};
     let players = [];
 
@@ -313,12 +195,6 @@ router.post('/:id/import-players', authenticate, async (req, res) => {
       if (settings.playerPool === 'all_active') {
         console.log('Importing all active NBA players...');
         players = await nbaApiService.getAllActivePlayers();
-      } else if (settings.playerPool === 'historical_season' && settings.historicalYear) {
-        console.log(`Importing NBA players from ${settings.historicalYear}...`);
-        players = await nbaApiService.getHistoricalRoster(settings.historicalYear);
-      } else if (settings.playerPool === 'draft_class' && settings.draftClass) {
-        console.log(`Importing NBA draft class ${settings.draftClass}...`);
-        players = await nbaApiService.getDraftClass(settings.draftClass);
       }
     } else if (league.sport === 'MLB') {
       const currentYear = new Date().getFullYear();
@@ -329,9 +205,6 @@ router.post('/:id/import-players', authenticate, async (req, res) => {
       } else if (settings.playerPool === 'historical_season' && settings.historicalYear) {
         console.log(`Importing MLB players from ${settings.historicalYear}...`);
         players = await mlbApiService.getAllPlayersForSeason(settings.historicalYear);
-      } else if (settings.playerPool === 'draft_class' && settings.draftClass) {
-        console.log(`Importing MLB draft class ${settings.draftClass}...`);
-        players = await mlbApiService.getDraftClass(settings.draftClass);
       }
     }
 
@@ -350,7 +223,6 @@ router.post('/:id/import-players', authenticate, async (req, res) => {
 
       for (const player of players) {
         try {
-          // Check if player exists
           const existing = await client2.query(
             'SELECT id FROM players WHERE external_id = $1',
             [player.external_id]
@@ -387,13 +259,6 @@ router.post('/:id/import-players', authenticate, async (req, res) => {
 
       await client2.query('COMMIT');
 
-      // Create activity
-      await pool.query(
-        `INSERT INTO league_activity (league_id, activity_type, title, description)
-         VALUES ($1, 'players_imported', 'Players Imported', $2)`,
-        [id, `${inserted} ${league.sport} players imported`]
-      ).catch(err => console.log('Could not create activity:', err.message));
-
       console.log(`Successfully imported ${inserted} players`);
 
       res.json({ 
@@ -411,30 +276,6 @@ router.post('/:id/import-players', authenticate, async (req, res) => {
   } catch (error) {
     console.error('Error importing players:', error);
     res.status(500).json({ error: 'Failed to import players', details: error.message });
-  }
-});
-
-/**
- * GET /api/leagues/:id/activity
- * Get league activity feed
- */
-router.get('/:id/activity', authenticate, async (req, res) => {
-  const { id } = req.params;
-  const { limit = 50 } = req.query;
-  
-  try {
-    const result = await pool.query(
-      `SELECT * FROM league_activity
-       WHERE league_id = $1
-       ORDER BY created_at DESC
-       LIMIT $2`,
-      [id, limit]
-    ).catch(() => ({ rows: [] }));
-    
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching activity:', error);
-    res.status(500).json({ error: 'Failed to fetch activity' });
   }
 });
 
