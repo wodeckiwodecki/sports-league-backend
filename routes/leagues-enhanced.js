@@ -167,115 +167,36 @@ router.post('/:id/import-players', async (req, res) => {
     
     const league = leagueResult.rows[0];
     const settings = league.league_settings || {};
-    let players = [];
 
-    console.log(`Importing players for ${league.sport} league with settings:`, settings);
+    console.log(`Setting up player pool for ${league.sport} league`);
 
-    // Ensure players table has needed columns
-    const client = await pool.connect();
-    try {
-      await client.query(`
-        ALTER TABLE players 
-        ADD COLUMN IF NOT EXISTS sport VARCHAR(10) DEFAULT 'NBA',
-        ADD COLUMN IF NOT EXISTS mlb_stats JSONB DEFAULT '{}'::jsonb,
-        ADD COLUMN IF NOT EXISTS historical_year INTEGER,
-        ADD COLUMN IF NOT EXISTS draft_class INTEGER,
-        ADD COLUMN IF NOT EXISTS birth_date DATE,
-        ADD COLUMN IF NOT EXISTS height VARCHAR(10),
-        ADD COLUMN IF NOT EXISTS weight INTEGER
-      `);
-    } catch (err) {
-      console.log('Columns may already exist:', err.message);
-    } finally {
-      client.release();
-    }
+    // Check how many players exist in database for this sport
+    const playerCount = await pool.query(
+      'SELECT COUNT(*) FROM players WHERE sport = $1',
+      [league.sport]
+    );
 
-    // Import based on player pool setting
-    if (league.sport === 'NBA') {
-      if (settings.playerPool === 'all_active') {
-        console.log('Importing all active NBA players...');
-        players = await nbaApiService.getAllActivePlayers();
-      }
-    } else if (league.sport === 'MLB') {
-      const currentYear = new Date().getFullYear();
-      
-      if (settings.playerPool === 'all_active') {
-        console.log('Importing all active MLB players...');
-        players = await mlbApiService.getAllPlayersForSeason(currentYear);
-      } else if (settings.playerPool === 'historical_season' && settings.historicalYear) {
-        console.log(`Importing MLB players from ${settings.historicalYear}...`);
-        players = await mlbApiService.getAllPlayersForSeason(settings.historicalYear);
-      }
-    }
+    const count = parseInt(playerCount.rows[0].count);
+    console.log(`Found ${count} ${league.sport} players already in database`);
 
-    if (!players || players.length === 0) {
-      return res.status(400).json({ error: 'No players found for the selected settings' });
-    }
-
-    console.log(`Found ${players.length} players, inserting into database...`);
-
-    // Insert players
-    const client2 = await pool.connect();
-    let inserted = 0;
-    
-    try {
-      await client2.query('BEGIN');
-
-      for (const player of players) {
-        try {
-          const existing = await client2.query(
-            'SELECT id FROM players WHERE external_id = $1',
-            [player.external_id]
-          );
-
-          if (existing.rows.length === 0) {
-            await client2.query(
-              `INSERT INTO players (
-                external_id, name, sport, position, age, overall_rating,
-                team, historical_year, draft_class, mlb_stats, height, weight, birth_date
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-              [
-                player.external_id,
-                player.name,
-                league.sport,
-                player.position || 'G',
-                player.age || 25,
-                player.overall_rating || 75,
-                player.team || 'Free Agent',
-                player.historical_year || null,
-                player.draft_class || null,
-                player.mlb_stats ? JSON.stringify(player.mlb_stats) : null,
-                player.height || null,
-                player.weight || null,
-                player.birth_date || null
-              ]
-            );
-            inserted++;
-          }
-        } catch (err) {
-          console.error(`Error inserting player ${player.name}:`, err.message);
-        }
-      }
-
-      await client2.query('COMMIT');
-
-      console.log(`Successfully imported ${inserted} players`);
-
-      res.json({ 
-        success: true, 
-        playersImported: inserted,
-        playerPool: settings.playerPool,
-        sport: league.sport
+    if (count === 0) {
+      return res.status(400).json({ 
+        error: `No ${league.sport} players found in database. Run the populate script first.` 
       });
-    } catch (error) {
-      await client2.query('ROLLBACK');
-      throw error;
-    } finally {
-      client2.release();
     }
+
+    // Players are already in database, just return success
+    res.json({ 
+      success: true, 
+      playersImported: count,
+      playerPool: settings.playerPool,
+      sport: league.sport,
+      message: 'Players already available in database'
+    });
+
   } catch (error) {
-    console.error('Error importing players:', error);
-    res.status(500).json({ error: 'Failed to import players', details: error.message });
+    console.error('Error setting up player pool:', error);
+    res.status(500).json({ error: 'Failed to setup player pool', details: error.message });
   }
 });
 
