@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const pool = require('../database/pool');
+const { pool } = require('../database/init');
 
 // Middleware to verify authentication
 const authenticate = require('../middleware/authenticate');
