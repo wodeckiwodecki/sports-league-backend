@@ -12,7 +12,15 @@ router.get('/', async (req, res) => {
 
     let query = 'SELECT * FROM players WHERE 1=1';
     const params = [];
-    let paramCount = 1;
+
+
+    // Add sport filter
+    if (req.query.sport) {
+      query += ` AND sport = $${paramCount}`;
+      params.push(req.query.sport);
+      paramCount++;
+    }
+
 
     if (position) {
       query += ` AND position = $${paramCount}`;
@@ -44,7 +52,9 @@ router.get('/', async (req, res) => {
       paramCount++;
     }
 
-    query += ' ORDER BY overall_rating DESC LIMIT 100';
+    // Use limit from query params, default 100, max 2000
+    const limit = req.query.limit ? Math.min(parseInt(req.query.limit), 2000) : 100;
+    query += ` ORDER BY overall_rating DESC LIMIT ${limit}`;
 
     const result = await pool.query(query, params);
     res.json(result.rows);
