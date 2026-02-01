@@ -166,7 +166,7 @@ router.get('/:id', async (req, res) => {
         l.*,
         u.username as commissioner_username
       FROM leagues l
-      LEFT JOIN users u ON l.commissioner_id = u.id
+      LEFT JOIN users u ON l.commissioner_user_id = u.id
       WHERE l.id = $1
     `, [id]);
     
