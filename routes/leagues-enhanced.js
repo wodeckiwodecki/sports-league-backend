@@ -193,7 +193,7 @@ router.get('/:id/teams', async (req, res) => {
       SELECT 
         t.*,
         u.username as owner_username,
-        (SELECT COUNT(*) FROM team_players WHERE team_id = t.id) as player_count
+        (SELECT COUNT(*) FROM team_rosters WHERE team_id = t.id) as player_count
       FROM teams t
       LEFT JOIN users u ON t.user_id = u.id
       WHERE t.league_id = $1
