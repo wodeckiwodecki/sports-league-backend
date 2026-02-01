@@ -152,6 +152,61 @@ router.post('/create-multiplayer', async (req, res) => {
  * POST /api/leagues-v2/:id/import-players
  * Import players based on league settings
  */
+
+/**
+ * GET /api/leagues-v2/:id
+ * Get league details by ID
+ */
+router.get('/:id', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const result = await pool.query(`
+      SELECT 
+        l.*,
+        u.username as commissioner_username
+      FROM leagues l
+      LEFT JOIN users u ON l.commissioner_id = u.id
+      WHERE l.id = $1
+    `, [id]);
+    
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'League not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching league:', error);
+    res.status(500).json({ error: 'Failed to fetch league' });
+  }
+});
+
+/**
+ * GET /api/leagues-v2/:id/teams
+ * Get all teams in a league
+ */
+router.get('/:id/teams', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const result = await pool.query(`
+      SELECT 
+        t.*,
+        u.username as owner_username,
+        (SELECT COUNT(*) FROM team_players WHERE team_id = t.id) as player_count
+      FROM teams t
+      LEFT JOIN users u ON t.user_id = u.id
+      WHERE t.league_id = $1
+      ORDER BY t.created_at
+    `, [id]);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching teams:', error);
+    res.status(500).json({ error: 'Failed to fetch teams' });
+  }
+});
+
 router.post('/:id/import-players', async (req, res) => {
   const { id } = req.params;
   
