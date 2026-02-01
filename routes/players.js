@@ -12,7 +12,7 @@ router.get('/', async (req, res) => {
 
     let query = 'SELECT * FROM players WHERE 1=1';
     const params = [];
-
+    let paramCount = 1;
 
     // Add sport filter
     if (req.query.sport) {
