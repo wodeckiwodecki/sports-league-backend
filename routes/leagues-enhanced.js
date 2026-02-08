@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../database/init');
+const authenticate = require('../middleware/authenticate');
 const nbaApiService = require('../services/nbaApiService');
 const mlbApiService = require('../services/mlbApiService');
 
@@ -8,69 +9,35 @@ const mlbApiService = require('../services/mlbApiService');
  * POST /api/leagues-v2/create-multiplayer
  * Create a new multiplayer league with full settings
  */
-router.post('/create-multiplayer', async (req, res) => {
+router.post('/create-multiplayer', authenticate, async (req, res) => {
   const {
     name,
-    sport = 'NBA',
-    maxTeams = 30,
+    sport = 'MLB',
+    maxTeams = 12,
     settings = {},
-    userId
+    teamName
   } = req.body;
   
-  if (!userId) {
-    return res.status(400).json({ error: 'userId is required' });
-  }
+  const userId = req.user.id; // Get from auth middleware
   
   const client = await pool.connect();
   
   try {
     await client.query('BEGIN');
 
-    // Default settings based on sport
-    const defaultSettings = sport === 'NBA' ? {
+    // Default settings
+    const defaultSettings = {
       playerPool: 'all_active',
-      historicalYear: null,
-      draftClass: null,
-      salaryCap: 120000000,
-      luxuryTax: 150000000,
+      salaryCap: sport === 'MLB' ? 200000000 : 120000000,
+      luxuryTax: sport === 'MLB' ? 230000000 : 150000000,
       draftType: 'snake',
-      draftRounds: 7,
-      regularSeasonGames: 82,
-      playoffTeams: 16,
-      playoffFormat: 'best_of_7'
-    } : {
-      playerPool: 'all_active',
-      historicalYear: null,
-      draftClass: null,
-      salaryCap: 200000000,
-      luxuryTax: 230000000,
-      draftType: 'snake',
-      draftRounds: 40,
-      regularSeasonGames: 162,
-      playoffTeams: 12,
+      draftRounds: sport === 'MLB' ? 40 : 7,
+      regularSeasonGames: sport === 'MLB' ? 162 : 82,
+      playoffTeams: sport === 'MLB' ? 12 : 16,
       playoffFormat: 'best_of_7'
     };
 
     const leagueSettings = { ...defaultSettings, ...settings };
-
-    // Check if columns exist, if not, add them
-    try {
-      await client.query(`
-        ALTER TABLE leagues 
-        ADD COLUMN IF NOT EXISTS sport VARCHAR(10) DEFAULT 'NBA',
-        ADD COLUMN IF NOT EXISTS league_settings JSONB DEFAULT '{}'::jsonb,
-        ADD COLUMN IF NOT EXISTS commissioner_user_id INTEGER,
-        ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'setup',
-        ADD COLUMN IF NOT EXISTS max_teams INTEGER DEFAULT 30,
-        ADD COLUMN IF NOT EXISTS current_season INTEGER DEFAULT 1
-      `);
-    } catch (err) {
-      console.log('Columns may already exist:', err.message);
-    }
-
-    // Get username
-    const userResult = await client.query('SELECT username FROM users WHERE id = $1', [userId]);
-    const username = userResult.rows[0]?.username || 'User';
 
     // Create league
     const leagueResult = await client.query(
@@ -93,43 +60,12 @@ router.post('/create-multiplayer', async (req, res) => {
     
     const league = leagueResult.rows[0];
 
-    // Ensure teams table has user_id column
-    try {
-      await client.query('ALTER TABLE teams ADD COLUMN IF NOT EXISTS is_ai_controlled BOOLEAN DEFAULT FALSE');
-    } catch (err) {
-      console.log('Column may already exist:', err.message);
-    }
-
     // Create first team for commissioner
     const teamResult = await client.query(
       `INSERT INTO teams (name, league_id, user_id, abbreviation)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [`${username}'s Team`, league.id, userId, 'T1']
-    );
-
-    // Create activity table if it doesn't exist
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS league_activity (
-          id SERIAL PRIMARY KEY,
-          league_id INTEGER NOT NULL,
-          activity_type VARCHAR(50) NOT NULL,
-          title VARCHAR(255) NOT NULL,
-          description TEXT,
-          data JSONB DEFAULT '{}'::jsonb,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-    } catch (err) {
-      console.log('Table may already exist:', err.message);
-    }
-
-    // Create activity
-    await client.query(
-      `INSERT INTO league_activity (league_id, activity_type, title, description)
-       VALUES ($1, 'league_created', 'League Created', $2)`,
-      [league.id, `${username} created the league`]
+      [teamName || `Team 1`, league.id, userId, 'T1']
     );
 
     await client.query('COMMIT');
@@ -149,70 +85,62 @@ router.post('/create-multiplayer', async (req, res) => {
 });
 
 /**
- * POST /api/leagues-v2/:id/import-players
- * Import players based on league settings
+ * GET /api/leagues-v2/:id/details
  */
-
-/**
- * GET /api/leagues-v2/:id
- * Get league details by ID
- */
-router.get('/:id', async (req, res) => {
+router.get('/:id/details', authenticate, async (req, res) => {
   const { id } = req.params;
-  
-  try {
-    const result = await pool.query(`
-      SELECT 
-        l.*,
-        u.username as commissioner_username
-      FROM leagues l
-      LEFT JOIN users u ON l.commissioner_user_id = u.id
-      WHERE l.id = $1
-    `, [id]);
-    
-    if (!result.rows.length) {
-      return res.status(404).json({ error: 'League not found' });
-    }
-    
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error fetching league:', error);
-    res.status(500).json({ error: 'Failed to fetch league' });
-  }
-});
-
-/**
- * GET /api/leagues-v2/:id/teams
- * Get all teams in a league
- */
-router.get('/:id/teams', async (req, res) => {
-  const { id } = req.params;
-  
-  try {
-    const result = await pool.query(`
-      SELECT 
-        t.*,
-        u.username as owner_username,
-        (SELECT COUNT(*) FROM team_rosters WHERE team_id = t.id) as player_count
-      FROM teams t
-      LEFT JOIN users u ON t.user_id = u.id
-      WHERE t.league_id = $1
-      ORDER BY t.created_at
-    `, [id]);
-    
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching teams:', error);
-    res.status(500).json({ error: 'Failed to fetch teams' });
-  }
-});
-
-router.post('/:id/import-players', async (req, res) => {
-  const { id } = req.params;
+  const userId = req.user.id;
   
   try {
     const leagueResult = await pool.query(
-      'SELECT sport, league_settings FROM leagues WHERE id = $1',
+      `SELECT l.*, u.username as commissioner_username
+       FROM leagues l
+       LEFT JOIN users u ON l.commissioner_user_id = u.id OR l.owner_id = u.id
+       WHERE l.id = $1`,
+      [id]
+    );
+    
+    if (!leagueResult.rows.length) {
+      return res.status(404).json({ error: 'League not found' });
+    }
+
+    const league = leagueResult.rows[0];
+
+    const teamsResult = await pool.query(
+      `SELECT t.*, u.username, u.email
+       FROM teams t
+       LEFT JOIN users u ON t.user_id = u.id
+       WHERE t.league_id = $1
+       ORDER BY t.id`,
+      [id]
+    );
+
+    const userTeam = teamsResult.rows.find(t => t.user_id === userId);
+    const isCommissioner = (league.commissioner_user_id === userId) || (league.owner_id === userId);
+
+    res.json({
+      league,
+      teams: teamsResult.rows,
+      userTeam,
+      isCommissioner,
+      settings: league.league_settings || {}
+    });
+  } catch (error) {
+    console.error('Error fetching league details:', error);
+    res.status(500).json({ error: 'Failed to fetch league details' });
+  }
+});
+
+/**
+ * POST /api/leagues-v2/:id/import-players
+ */
+router.post('/:id/import-players', authenticate, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+  
+  try {
+    const leagueResult = await pool.query(
+      'SELECT commissioner_user_id, owner_id, sport, league_settings FROM leagues WHERE id = $1',
       [id]
     );
     
@@ -221,37 +149,90 @@ router.post('/:id/import-players', async (req, res) => {
     }
     
     const league = leagueResult.rows[0];
-    const settings = league.league_settings || {};
-
-    console.log(`Setting up player pool for ${league.sport} league`);
-
-    // Check how many players exist in database for this sport
-    const playerCount = await pool.query(
-      'SELECT COUNT(*) FROM players WHERE sport = $1',
-      [league.sport]
-    );
-
-    const count = parseInt(playerCount.rows[0].count);
-    console.log(`Found ${count} ${league.sport} players already in database`);
-
-    if (count === 0) {
-      return res.status(400).json({ 
-        error: `No ${league.sport} players found in database. Run the populate script first.` 
-      });
+    const isCommissioner = (league.commissioner_user_id === userId) || (league.owner_id === userId);
+    
+    if (!isCommissioner) {
+      return res.status(403).json({ error: 'Only the commissioner can import players' });
     }
 
-    // Players are already in database, just return success
-    res.json({ 
-      success: true, 
-      playersImported: count,
-      playerPool: settings.playerPool,
-      sport: league.sport,
-      message: 'Players already available in database'
-    });
+    const settings = league.league_settings || {};
+    let players = [];
 
+    console.log(`Importing players for ${league.sport} league...`);
+
+    if (league.sport === 'MLB') {
+      const currentYear = new Date().getFullYear();
+      
+      if (settings.playerPool === 'all_active') {
+        players = await mlbApiService.getAllPlayersForSeason(currentYear);
+      } else if (settings.playerPool === 'historical_season' && settings.historicalYear) {
+        players = await mlbApiService.getAllPlayersForSeason(settings.historicalYear);
+      }
+    }
+
+    if (!players || players.length === 0) {
+      return res.status(400).json({ error: 'No players found' });
+    }
+
+    console.log(`Found ${players.length} players, inserting...`);
+
+    const client = await pool.connect();
+    let inserted = 0;
+    
+    try {
+      await client.query('BEGIN');
+
+      for (const player of players) {
+        try {
+          const existing = await client.query(
+            'SELECT id FROM players WHERE external_id = $1',
+            [player.external_id]
+          );
+
+          if (existing.rows.length === 0) {
+            await client.query(
+              `INSERT INTO players (
+                external_id, name, sport, position, age, overall_rating,
+                team, historical_year, mlb_stats, height, weight, birth_date
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+              [
+                player.external_id,
+                player.name,
+                league.sport,
+                player.position || 'P',
+                player.age || 25,
+                player.overall_rating || 75,
+                player.team || 'Free Agent',
+                player.historical_year || null,
+                player.mlb_stats ? JSON.stringify(player.mlb_stats) : null,
+                player.height || null,
+                player.weight || null,
+                player.birth_date || null
+              ]
+            );
+            inserted++;
+          }
+        } catch (err) {
+          console.error(`Error inserting player ${player.name}:`, err.message);
+        }
+      }
+
+      await client.query('COMMIT');
+
+      res.json({ 
+        success: true, 
+        playersImported: inserted,
+        sport: league.sport
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   } catch (error) {
-    console.error('Error setting up player pool:', error);
-    res.status(500).json({ error: 'Failed to setup player pool', details: error.message });
+    console.error('Error importing players:', error);
+    res.status(500).json({ error: 'Failed to import players', details: error.message });
   }
 });
 
