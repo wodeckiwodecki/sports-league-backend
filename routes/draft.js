@@ -278,6 +278,39 @@ router.post('/:leagueId/auto-pick', async (req, res) => {
 });
 
 /**
+ * Get position categories based on sport
+ */
+function getPositionsByPort(sport) {
+  if (sport === 'NBA') {
+    return {
+      PG: [],  // Point Guard
+      SG: [],  // Shooting Guard
+      SF: [],  // Small Forward
+      PF: [],  // Power Forward
+      C: [],   // Center
+      G: [],   // Guard (generic)
+      F: []    // Forward (generic)
+    };
+  }
+  // Default to MLB
+  return {
+    SP: [],  // Starting Pitcher
+    RP: [],  // Relief Pitcher
+    C: [],   // Catcher
+    '1B': [],
+    '2B': [],
+    '3B': [],
+    SS: [],  // Shortstop
+    LF: [],  // Left Field
+    CF: [],  // Center Field
+    RF: [],  // Right Field
+    DH: [],  // Designated Hitter
+    OF: [],  // Outfield (generic)
+    P: []    // Pitcher (generic)
+  };
+}
+
+/**
  * GET /api/draft/:leagueId/draft-board
  * Get best available players (draft board view)
  */
@@ -293,29 +326,16 @@ router.get('/:leagueId/draft-board', async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT * FROM players 
+      `SELECT * FROM players
        WHERE id = ANY($1)
        ORDER BY overall_rating DESC, potential DESC
        LIMIT $2`,
       [draftState.available_players, limit]
     );
 
-    // Group by position (MLB positions)
-    const byPosition = {
-      SP: [],  // Starting Pitcher
-      RP: [],  // Relief Pitcher
-      C: [],   // Catcher
-      '1B': [],
-      '2B': [],
-      '3B': [],
-      SS: [],  // Shortstop
-      LF: [],  // Left Field
-      CF: [],  // Center Field
-      RF: [],  // Right Field
-      DH: [],  // Designated Hitter
-      OF: [],  // Outfield (generic)
-      P: []    // Pitcher (generic)
-    };
+    // Group by position based on sport
+    const sport = draftState.sport || 'MLB';
+    const byPosition = getPositionsByPort(sport);
 
     result.rows.forEach(player => {
       const pos = player.position;
@@ -331,6 +351,7 @@ router.get('/:leagueId/draft-board', async (req, res) => {
     res.json({
       overall: result.rows,
       byPosition,
+      sport,
       totalAvailable: draftState.available_players.length
     });
   } catch (error) {

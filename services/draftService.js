@@ -10,9 +10,21 @@ const anthropic = new Anthropic({
  */
 async function initializeDraft(leagueId, draftSettings) {
   const client = await pool.connect();
-  
+
   try {
     await client.query('BEGIN');
+
+    // Get the league to determine sport
+    const leagueResult = await client.query(
+      'SELECT sport FROM leagues WHERE id = $1',
+      [leagueId]
+    );
+
+    if (leagueResult.rows.length === 0) {
+      throw new Error('League not found');
+    }
+
+    const sport = leagueResult.rows[0].sport || 'MLB';
 
     // Get all teams in the league
     const teamsResult = await client.query(
@@ -41,6 +53,7 @@ async function initializeDraft(leagueId, draftSettings) {
     // Create draft state
     const draftState = {
       league_id: leagueId,
+      sport: sport,
       status: 'not_started',
       current_pick: 1,
       current_round: 1,
@@ -363,7 +376,8 @@ async function makeAIDraftPick(leagueId, teamId, io) {
       availablePlayers,
       positionCounts,
       draftState.current_pick,
-      draftState.current_round
+      draftState.current_round,
+      draftState.sport || 'MLB'
     );
 
     // Make the pick
@@ -377,11 +391,29 @@ async function makeAIDraftPick(leagueId, teamId, io) {
 }
 
 /**
+ * Get sport-specific draft guidance
+ */
+function getSportDraftGuidance(sport) {
+  if (sport === 'NBA') {
+    return {
+      positions: 'PG, SG, SF, PF, C',
+      strategy: 'Point guards, wings, and rim protectors have high strategic value'
+    };
+  }
+  // Default to MLB
+  return {
+    positions: 'SP, RP, C, 1B, 2B, 3B, SS, OF',
+    strategy: 'Starting pitchers and power hitters have high strategic value'
+  };
+}
+
+/**
  * AI selects best available player based on team needs
  */
-async function selectBestPlayer(team, availablePlayers, positionCounts, pickNumber, round) {
+async function selectBestPlayer(team, availablePlayers, positionCounts, pickNumber, round, sport = 'MLB') {
   try {
-    const prompt = `You are an MLB GM making a fantasy draft pick. Analyze the available players and team needs.
+    const guidance = getSportDraftGuidance(sport);
+    const prompt = `You are a ${sport} GM making a fantasy draft pick. Analyze the available players and team needs.
 
 Team: ${team.name}
 Current Pick: Round ${round}, Pick ${pickNumber}
@@ -392,9 +424,9 @@ ${availablePlayers.map((p, i) => `${i + 1}. ${p.name} - ${p.position}, Overall: 
 
 Choose the best player considering:
 1. Best Player Available (BPA) - overall talent level
-2. Team Needs - fill position gaps (SP, RP, C, 1B, 2B, 3B, SS, OF)
+2. Team Needs - fill position gaps (${guidance.positions})
 3. Potential - especially important in later rounds
-4. Position value - Starting pitchers and power hitters have high strategic value
+4. Position value - ${guidance.strategy}
 
 Return ONLY a JSON object with this exact format:
 {
@@ -443,7 +475,7 @@ Return ONLY a JSON object with this exact format:
  * Calculate rookie contract based on draft position
  */
 function calculateRookieContract(pickNumber, overall) {
-  // MLB fantasy league rookie contracts (simplified)
+  // Fantasy league rookie contracts (simplified scale)
   const baseContracts = {
     1: 10000000,
     2: 9000000,
