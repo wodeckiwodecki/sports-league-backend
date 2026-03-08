@@ -18,6 +18,11 @@ router.post('/initialize', async (req, res) => {
   try {
     const { leagueId, settings } = req.body;
 
+    const leagueIdInt = parseInt(leagueId, 10);
+    if (isNaN(leagueIdInt)) {
+      return res.status(400).json({ error: 'Invalid league ID' });
+    }
+
     const draftSettings = {
       rounds: settings?.rounds || 10,
       type: settings?.type || 'snake',
@@ -25,7 +30,7 @@ router.post('/initialize', async (req, res) => {
       timePerPick: settings?.timePerPick || 90 // seconds
     };
 
-    const draftState = await initializeDraft(leagueId, draftSettings);
+    const draftState = await initializeDraft(leagueIdInt, draftSettings);
 
     res.status(201).json({
       message: 'Draft initialized successfully',
@@ -45,15 +50,20 @@ router.post('/start', async (req, res) => {
   try {
     const { leagueId } = req.body;
 
-    const draftState = await startDraft(leagueId);
+    const leagueIdInt = parseInt(leagueId, 10);
+    if (isNaN(leagueIdInt)) {
+      return res.status(400).json({ error: 'Invalid league ID' });
+    }
+
+    const draftState = await startDraft(leagueIdInt);
 
     // Start auto-drafting for AI teams
     const io = req.app.get('io');
-    setTimeout(() => processAIDrafts(leagueId, io), 1000);
+    setTimeout(() => processAIDrafts(leagueIdInt, io), 1000);
 
     // Emit to all connected clients
-    io.to(`league_${leagueId}`).emit('draft_started', {
-      leagueId,
+    io.to(`league_${leagueIdInt}`).emit('draft_started', {
+      leagueId: leagueIdInt,
       currentPick: draftState.current_pick
     });
 
@@ -75,11 +85,20 @@ router.post('/pick', async (req, res) => {
   try {
     const { leagueId, teamId, playerId } = req.body;
 
+    // Ensure IDs are integers
+    const leagueIdInt = parseInt(leagueId, 10);
+    const teamIdInt = parseInt(teamId, 10);
+    const playerIdInt = parseInt(playerId, 10);
+
+    if (isNaN(leagueIdInt) || isNaN(teamIdInt) || isNaN(playerIdInt)) {
+      return res.status(400).json({ error: 'Invalid ID values' });
+    }
+
     const io = req.app.get('io');
-    const result = await makeDraftPick(leagueId, teamId, playerId, io);
+    const result = await makeDraftPick(leagueIdInt, teamIdInt, playerIdInt, io);
 
     // Continue AI drafting if next pick is AI
-    setTimeout(() => processAIDrafts(leagueId, io), 1000);
+    setTimeout(() => processAIDrafts(leagueIdInt, io), 1000);
 
     res.json({
       message: 'Pick made successfully',
@@ -233,11 +252,18 @@ router.post('/:leagueId/auto-pick', async (req, res) => {
     const { leagueId } = req.params;
     const { teamId } = req.body;
 
+    const leagueIdInt = parseInt(leagueId, 10);
+    const teamIdInt = parseInt(teamId, 10);
+
+    if (isNaN(leagueIdInt) || isNaN(teamIdInt)) {
+      return res.status(400).json({ error: 'Invalid ID values' });
+    }
+
     const io = req.app.get('io');
-    const result = await makeAIDraftPick(leagueId, teamId, io);
+    const result = await makeAIDraftPick(leagueIdInt, teamIdInt, io);
 
     // Continue AI drafting if next pick is AI
-    setTimeout(() => processAIDrafts(leagueId, io), 1000);
+    setTimeout(() => processAIDrafts(leagueIdInt, io), 1000);
 
     res.json({
       message: 'Auto-pick made successfully',
@@ -274,18 +300,31 @@ router.get('/:leagueId/draft-board', async (req, res) => {
       [draftState.available_players, limit]
     );
 
-    // Group by position
+    // Group by position (MLB positions)
     const byPosition = {
-      PG: [],
-      SG: [],
-      SF: [],
-      PF: [],
-      C: []
+      SP: [],  // Starting Pitcher
+      RP: [],  // Relief Pitcher
+      C: [],   // Catcher
+      '1B': [],
+      '2B': [],
+      '3B': [],
+      SS: [],  // Shortstop
+      LF: [],  // Left Field
+      CF: [],  // Center Field
+      RF: [],  // Right Field
+      DH: [],  // Designated Hitter
+      OF: [],  // Outfield (generic)
+      P: []    // Pitcher (generic)
     };
 
     result.rows.forEach(player => {
-      if (byPosition[player.position]) {
-        byPosition[player.position].push(player);
+      const pos = player.position;
+      if (byPosition[pos]) {
+        byPosition[pos].push(player);
+      } else {
+        // Handle any unknown positions
+        if (!byPosition['Other']) byPosition['Other'] = [];
+        byPosition['Other'].push(player);
       }
     });
 

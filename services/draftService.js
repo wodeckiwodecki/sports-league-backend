@@ -381,7 +381,7 @@ async function makeAIDraftPick(leagueId, teamId, io) {
  */
 async function selectBestPlayer(team, availablePlayers, positionCounts, pickNumber, round) {
   try {
-    const prompt = `You are an NBA GM making a draft pick. Analyze the available players and team needs.
+    const prompt = `You are an MLB GM making a fantasy draft pick. Analyze the available players and team needs.
 
 Team: ${team.name}
 Current Pick: Round ${round}, Pick ${pickNumber}
@@ -392,9 +392,9 @@ ${availablePlayers.map((p, i) => `${i + 1}. ${p.name} - ${p.position}, Overall: 
 
 Choose the best player considering:
 1. Best Player Available (BPA) - overall talent level
-2. Team Needs - fill position gaps
+2. Team Needs - fill position gaps (SP, RP, C, 1B, 2B, 3B, SS, OF)
 3. Potential - especially important in later rounds
-4. Position value - PG, wings, and centers have different strategic value
+4. Position value - Starting pitchers and power hitters have high strategic value
 
 Return ONLY a JSON object with this exact format:
 {
@@ -443,7 +443,7 @@ Return ONLY a JSON object with this exact format:
  * Calculate rookie contract based on draft position
  */
 function calculateRookieContract(pickNumber, overall) {
-  // NBA rookie scale contracts (simplified)
+  // MLB fantasy league rookie contracts (simplified)
   const baseContracts = {
     1: 10000000,
     2: 9000000,
