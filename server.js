@@ -74,6 +74,18 @@ app.get('/admin/populate-mlb-players', async (req, res) => {
   res.json({ message: 'Player population started. Check logs for progress.' });
 });
 
+// Admin endpoint to seed NBA players from Basketball GM roster
+app.post('/admin/seed-nba-players', async (req, res) => {
+  try {
+    const { seedNBAPlayers } = require('./scripts/seed-nba-players');
+    res.json({ message: 'NBA player seed started. Check logs for progress.' });
+    const result = await seedNBAPlayers();
+    console.log('NBA seed complete:', result);
+  } catch (err) {
+    console.error('NBA seed error:', err);
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
