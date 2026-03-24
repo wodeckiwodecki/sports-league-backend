@@ -262,16 +262,23 @@ async function makeDraftPick(leagueId, teamId, playerId, io) {
 
     // Move to next pick
     draftState.current_pick++;
-    
-    // Check if we need to move to next round
-    if (draftState.current_pick > draftState.teams.length * draftState.current_round) {
-      draftState.current_round++;
-    }
+
+    // Calculate current round based on pick number
+    draftState.current_round = Math.ceil(draftState.current_pick / draftState.teams.length);
 
     // Check if draft is complete
     if (draftState.current_pick > draftState.draft_order.length) {
       draftState.status = 'completed';
       draftState.completed_at = new Date().toISOString();
+
+      // Activate league so time progression and game scheduling can start
+      await client.query(
+        `UPDATE leagues SET status = 'active', last_processed = NOW() WHERE id = $1`,
+        [leagueId]
+      );
+
+      // Schedule games for the season
+      await scheduleLeagueGames(client, leagueId);
     }
 
     // Save updated draft state
@@ -404,7 +411,7 @@ Return ONLY a JSON object with this exact format:
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 300,
+      max_tokens: 500,
       messages: [{
         role: 'user',
         content: prompt
@@ -538,6 +545,58 @@ async function getDraftState(leagueId) {
   return result.rows[0].draft_state;
 }
 
+/**
+ * Schedule a round-robin game schedule after draft completes
+ */
+async function scheduleLeagueGames(client, leagueId) {
+  try {
+    const leagueResult = await client.query(
+      'SELECT league_settings, sport FROM leagues WHERE id = $1',
+      [leagueId]
+    );
+    const league = leagueResult.rows[0];
+    const settings = league?.league_settings || {};
+    const gamesPerTeam = settings.regularSeasonGames || 82;
+
+    const teamsResult = await client.query(
+      'SELECT id FROM teams WHERE league_id = $1 ORDER BY id',
+      [leagueId]
+    );
+    const teams = teamsResult.rows.map(t => t.id);
+
+    if (teams.length < 2) return; // Need at least 2 teams
+
+    // Generate round-robin matchups
+    const matchups = [];
+    for (let i = 0; i < teams.length; i++) {
+      for (let j = i + 1; j < teams.length; j++) {
+        matchups.push([teams[i], teams[j]]);
+      }
+    }
+
+    // Repeat matchups to fill gamesPerTeam
+    const totalGames = Math.floor((gamesPerTeam * teams.length) / 2);
+    let day = 1;
+    let gameIndex = 0;
+
+    for (let g = 0; g < totalGames; g++) {
+      const [home, away] = matchups[gameIndex % matchups.length];
+      await client.query(
+        `INSERT INTO games (league_id, home_team_id, away_team_id, season, day, status)
+         VALUES ($1, $2, $3, 1, $4, 'scheduled')
+         ON CONFLICT DO NOTHING`,
+        [leagueId, home, away, day]
+      );
+      gameIndex++;
+      if (gameIndex % Math.max(1, Math.floor(teams.length / 2)) === 0) day++;
+    }
+    console.log(`Scheduled ${totalGames} games for league ${leagueId}`);
+  } catch (err) {
+    console.error('Error scheduling games:', err.message);
+    // Non-fatal — don't throw
+  }
+}
+
 module.exports = {
   initializeDraft,
   startDraft,
@@ -545,5 +604,6 @@ module.exports = {
   makeAIDraftPick,
   processAIDrafts,
   getDraftState,
-  generateDraftOrder
+  generateDraftOrder,
+  scheduleLeagueGames
 };
