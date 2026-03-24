@@ -140,10 +140,9 @@ async function importNBAPlayers() {
         const fullName = `${player.first_name} ${player.last_name}`;
         const position = normalizePosition(player.position);
         
-        // Fetch recent stats to calculate rating
-        const stats = await fetchPlayerSeasonAverages(player.id, 2023);
-        await new Promise(resolve => setTimeout(resolve, 100)); // Rate limiting
-        
+        // Skip per-player stat lookups to avoid rate limits on bulk import
+        // Base ratings are assigned; can be enriched later
+        const stats = null;
         const overallRating = calculateOverallRating(stats, player);
         
         // Calculate potential (younger players have higher potential)
