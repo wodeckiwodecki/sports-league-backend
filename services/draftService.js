@@ -26,16 +26,24 @@ async function initializeDraft(leagueId, draftSettings) {
       throw new Error('No teams in league');
     }
 
-    // Get available players for draft pool
+    // Get league sport so we only pull matching players
+    const leagueResult = await client.query(
+      'SELECT sport FROM leagues WHERE id = $1',
+      [leagueId]
+    );
+    const leagueSport = leagueResult.rows[0]?.sport || 'MLB';
+
+    // Get available players for draft pool — filtered by sport
     const playersResult = await client.query(
       `SELECT p.* FROM players p
-       WHERE NOT EXISTS (
+       WHERE p.sport = $1
+       AND NOT EXISTS (
          SELECT 1 FROM team_rosters tr 
-         WHERE tr.player_id = p.id AND tr.league_id = $1
+         WHERE tr.player_id = p.id AND tr.league_id = $2
        )
        ORDER BY p.overall_rating DESC
-       LIMIT $2`,
-      [leagueId, draftSettings.totalPicks || 500]
+       LIMIT $3`,
+      [leagueSport, leagueId, draftSettings.totalPicks || 500]
     );
 
     // Create draft state
