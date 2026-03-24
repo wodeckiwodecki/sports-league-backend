@@ -74,6 +74,31 @@ app.get('/admin/populate-mlb-players', async (req, res) => {
   res.json({ message: 'Player population started. Check logs for progress.' });
 });
 
+// Admin endpoint to wipe all leagues and related data
+app.post('/admin/reset-leagues', async (req, res) => {
+  const { pool } = require('./database/init');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM storylines');
+    await client.query('DELETE FROM contract_offers');
+    await client.query('DELETE FROM trades');
+    await client.query('DELETE FROM games');
+    await client.query('DELETE FROM player_stats');
+    await client.query('DELETE FROM team_rosters');
+    await client.query('DELETE FROM teams');
+    await client.query('DELETE FROM leagues');
+    await client.query('COMMIT');
+    res.json({ message: 'All leagues, teams, games, trades, and contracts deleted.' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Reset error:', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // Admin endpoint to seed NBA players from Basketball GM roster
 app.post('/admin/seed-nba-players', async (req, res) => {
   try {
