@@ -2,22 +2,26 @@ const axios = require('axios');
 const { pool } = require('../database/init');
 
 const NBA_API_BASE = 'https://api.balldontlie.io/v1';
+const NBA_API_KEY = process.env.BALLDONTLIE_API_KEY || '95dbcfc6-89b4-4b32-b966-59095dc91bd6';
+
+const nbaAxios = axios.create({
+  baseURL: NBA_API_BASE,
+  headers: { Authorization: NBA_API_KEY }
+});
 
 /**
- * Fetch players from NBA API with pagination
+ * Fetch players from NBA API with cursor-based pagination
  */
-async function fetchNBAPlayers(page = 1, perPage = 100) {
+async function fetchNBAPlayers(cursor = null, perPage = 100) {
   try {
-    const response = await axios.get(`${NBA_API_BASE}/players`, {
-      params: {
-        page,
-        per_page: perPage
-      }
-    });
+    const params = { per_page: perPage };
+    if (cursor) params.cursor = cursor;
+
+    const response = await nbaAxios.get('/players', { params });
 
     return {
       players: response.data.data,
-      meta: response.data.meta
+      nextCursor: response.data.meta?.next_cursor || null
     };
   } catch (error) {
     console.error('Error fetching NBA players:', error.message);
@@ -26,25 +30,19 @@ async function fetchNBAPlayers(page = 1, perPage = 100) {
 }
 
 /**
- * Fetch all NBA players (handles pagination)
+ * Fetch all NBA players (handles cursor-based pagination)
  */
 async function fetchAllNBAPlayers() {
   const allPlayers = [];
-  let currentPage = 1;
-  let hasMore = true;
+  let cursor = null;
 
-  while (hasMore) {
-    const { players, meta } = await fetchNBAPlayers(currentPage, 100);
+  do {
+    const { players, nextCursor } = await fetchNBAPlayers(cursor, 100);
     allPlayers.push(...players);
-    
-    console.log(`Fetched page ${currentPage}, total players: ${allPlayers.length}`);
-    
-    hasMore = meta.next_page !== null;
-    currentPage++;
-    
-    // Add delay to respect rate limits
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
+    console.log(`Fetched ${allPlayers.length} players so far...`);
+    cursor = nextCursor;
+    if (cursor) await new Promise(resolve => setTimeout(resolve, 300));
+  } while (cursor);
 
   return allPlayers;
 }
@@ -52,11 +50,11 @@ async function fetchAllNBAPlayers() {
 /**
  * Fetch player season averages
  */
-async function fetchPlayerSeasonAverages(playerId, season = 2023) {
+async function fetchPlayerSeasonAverages(playerId, season = 2024) {
   try {
-    const response = await axios.get(`${NBA_API_BASE}/season_averages`, {
+    const response = await nbaAxios.get('/season_averages', {
       params: {
-        player_ids: [playerId],
+        player_id: playerId,
         season
       }
     });
@@ -163,7 +161,7 @@ async function importNBAPlayers() {
           await client.query(
             `UPDATE players 
              SET position = $1, overall_rating = $2, potential = $3, 
-                 attributes = $4
+                 attributes = $4, sport = 'NBA'
              WHERE name = $5`,
             [
               position,
@@ -184,15 +182,15 @@ async function importNBAPlayers() {
           // Insert new player
           await client.query(
             `INSERT INTO players 
-             (name, position, age, overall_rating, potential, draft_year, draft_class, attributes)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+             (name, position, age, overall_rating, potential, draft_year, draft_class, attributes, sport)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'NBA')`,
             [
               fullName,
               position,
               age,
               overallRating,
               potential,
-              null, // We don't have draft year from this API
+              null,
               null,
               JSON.stringify({
                 nba_api_id: player.id,
@@ -265,10 +263,8 @@ function calculatePotential(overall, age) {
  */
 async function searchNBAPlayers(searchTerm) {
   try {
-    const response = await axios.get(`${NBA_API_BASE}/players`, {
-      params: {
-        search: searchTerm
-      }
+    const response = await nbaAxios.get('/players', {
+      params: { search: searchTerm }
     });
 
     return response.data.data;
@@ -283,10 +279,8 @@ async function searchNBAPlayers(searchTerm) {
  */
 async function getPlayersByTeam(teamId) {
   try {
-    const response = await axios.get(`${NBA_API_BASE}/players`, {
-      params: {
-        team_ids: [teamId]
-      }
+    const response = await nbaAxios.get('/players', {
+      params: { team_ids: [teamId] }
     });
 
     return response.data.data;
