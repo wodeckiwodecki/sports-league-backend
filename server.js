@@ -80,14 +80,16 @@ app.post('/admin/reset-leagues', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('DELETE FROM storylines');
-    await client.query('DELETE FROM contract_offers');
-    await client.query('DELETE FROM trades');
-    await client.query('DELETE FROM games');
-    await client.query('DELETE FROM player_stats');
-    await client.query('DELETE FROM team_rosters');
-    await client.query('DELETE FROM teams');
-    await client.query('DELETE FROM leagues');
+    await client.query('DELETE FROM storylines').catch(() => {});
+    await client.query('DELETE FROM contract_offers').catch(() => {});
+    await client.query('DELETE FROM trades').catch(() => {});
+    await client.query('DELETE FROM games').catch(() => {});
+    await client.query('DELETE FROM player_stats').catch(() => {});
+    await client.query('DELETE FROM draft_picks').catch(() => {});
+    await client.query('DELETE FROM drafts').catch(() => {});
+    await client.query('DELETE FROM team_rosters').catch(() => {});
+    await client.query('DELETE FROM teams').catch(() => {});
+    await client.query('DELETE FROM leagues').catch(() => {});
     await client.query('COMMIT');
     res.json({ message: 'All leagues, teams, games, trades, and contracts deleted.' });
   } catch (err) {
