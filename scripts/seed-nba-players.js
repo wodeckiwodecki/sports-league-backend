@@ -22,15 +22,19 @@ function normalizePosition(pos) {
   return map[pos] || 'SF';
 }
 
-// Calculate overall rating from Basketball GM skill ratings (0-100 scale)
+// Calculate overall rating from Basketball GM skill ratings
+// Basketball GM ratings typically range 20-90 for elite players
 function calculateOverall(ratings) {
-  if (!ratings) return 70;
-  // Weight key skills
-  const { ins = 50, fg = 50, tp = 50, diq = 50, oiq = 50, spd = 50, reb = 50, pss = 50 } = ratings;
-  const raw = (ins * 0.15) + (fg * 0.15) + (tp * 0.10) + (diq * 0.15) +
-              (oiq * 0.15) + (spd * 0.10) + (reb * 0.10) + (pss * 0.10);
-  // Basketball GM uses ~40-80 range; normalize to 60-99
-  return Math.min(99, Math.max(60, Math.round(40 + (raw / 100) * 59)));
+  if (!ratings) return 65;
+  const { ins = 40, fg = 40, tp = 40, diq = 40, oiq = 40, spd = 40, reb = 40, pss = 40, dnk = 40, ft = 40 } = ratings;
+  // Weighted composite of key attributes
+  const raw = (ins * 0.12) + (fg * 0.14) + (tp * 0.08) + (diq * 0.14) +
+              (oiq * 0.14) + (spd * 0.08) + (reb * 0.10) + (pss * 0.10) +
+              (dnk * 0.06) + (ft * 0.04);
+  // Basketball GM elite players score ~65-80 on this weighted avg
+  // Map: raw 40 → OVR 60, raw 65 → OVR 85, raw 80+ → OVR 99
+  const normalized = Math.round(60 + ((raw - 40) / 40) * 39);
+  return Math.min(99, Math.max(55, normalized));
 }
 
 function fetchJSON(url) {
